@@ -1,0 +1,209 @@
+Parameters:
+  GitHubRepository:
+    Type: String
+    Default: akane34/endava-challenge-aws-cloud/master
+    Description:  owner/repository/branch
+
+  GitHubOAuthToken:
+    Type: String
+    Default:  GitHub OAuthToken Here
+    Description:  CodePipeline requires an OAuthToken
+
+  EmailSender:
+    Type: String
+    Default:  challenge.cloud@yopmail.com
+    Description:  Email for send notifications
+    
+Resources:
+  # --------------------------------------BEGIN FRONTEND ---------------------------------
+  #Create AWS S3 Bucket
+  WebContentBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Delete
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html      
+        
+  WebContentBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket:
+        Ref: WebContentBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 's3:GetObject'
+            Effect: Allow
+            Resource:
+              'Fn::Join':
+                - ''
+                - - 'arn:aws:s3:::'
+                  - Ref: WebContentBucket
+                  - /*
+            Principal: '*'            
+            
+  #Create AWS CloudFront and associate to S3 Bucket
+  WebContentCDN:
+    Type: 'AWS::CloudFront::Distribution'
+    DeletionPolicy: Delete
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !GetAtt 
+              - WebContentBucket
+              - DomainName
+            Id: WebContentS3Origin
+            S3OriginConfig: {}
+        Enabled: 'true'
+        DefaultCacheBehavior:
+          TargetOriginId: WebContentS3Origin
+          ForwardedValues:
+            QueryString: 'false'
+          ViewerProtocolPolicy: allow-all
+          
+  #Create CodePipeline Roles for deploy
+  CodeBuildRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName:
+        'Fn::Join': [ '', ['CodeBuildRole', '-', !Ref 'AWS::StackName']]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          Effect: 'Allow'
+          Principal:
+            Service: 'codebuild.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Policies:
+        -
+          PolicyName: "CodeBuildNestedCFNAccessPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:              
+              -
+                Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource:
+                  - Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+              -
+                Effect: "Allow"
+                Action:
+                  - "s3:PutObject"
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:ListBucket"
+                Resource:
+                  - Fn::Sub: arn:aws:s3:::codepipeline-${AWS::Region}-*
+                  - Fn::Sub: arn:aws:s3:::${WebContentBucket}/*
+                  - Fn::Sub: arn:aws:s3:::${WebContentBucket}
+          
+  CodePipelineRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName:
+        'Fn::Join': [ '', ['CodePipelineRole', '-', !Ref 'AWS::StackName']]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          Effect: 'Allow'
+          Principal:
+            Service: 'codepipeline.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      
+  #Create CodePipeline Policies          
+  CodePipelinePolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName:
+        'Fn::Join': [ '', ['CodePipelinePolicy', '-', !Ref 'AWS::StackName']]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - s3:putObject
+            - s3:getObject
+            - codebuild:*
+          Resource:
+            - '*'
+      Roles:
+        -  !Ref CodePipelineRole
+    
+  # CodePipeline with its stages:
+  S3:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Join [ '', ['sourcecode', "-", !Ref 'AWS::StackName']]
+      
+  Pipeline:
+    Type: 'AWS::CodePipeline::Pipeline'
+    Properties:
+      Name: !Join [ '', ['DevOps-Pipeline', '-', !Ref 'AWS::StackName'] ]
+      ArtifactStore:
+        Location: !Ref S3
+        Type: S3
+      RestartExecutionOnUpdate: true
+      RoleArn: !Join [ '', ['arn:aws:iam::', !Ref 'AWS::AccountId', ':role/', !Ref CodePipelineRole  ] ]
+      Stages:
+
+        # Stage 1:  Get the source from GitHub:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              RunOrder: 1
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: 1
+              Configuration:
+                Owner: !Select [0, !Split [ '/' , !Ref GitHubRepository ]]
+                Repo: !Select [1, !Split [ '/' , !Ref GitHubRepository ]]
+                Branch: !Select [2, !Split [ '/' , !Ref GitHubRepository ]]
+                PollForSourceChanges: true
+                OAuthToken: !Ref GitHubOAuthToken
+              OutputArtifacts:
+                - Name: SourceCodeOutput
+                
+        # Stage 2:  Build and Deploy using Serverless Framework        
+        - Name: Deploy
+          Actions:
+            - Name: S3Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: S3
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceCodeOutput
+              Configuration: 
+                BucketName: !Ref WebContentBucket
+                Extract: 'true'
+              RunOrder: 2      
+# --------------------------------------END FRONTEND ---------------------------------        
+
+# --------------------------------------BEGIN BACKEND ---------------------------------
+
+# --------------------------------------END BACKEND ---------------------------------
+
+Outputs:
+  WebsiteURL:
+    Value: !GetAtt [WebContentBucket, WebsiteURL]
+    Description: URL for website hosted on S3
+  S3BucketSecureURL:
+    Value: !Join ['', ['https://', !GetAtt [WebContentBucket, DomainName]]]
+    Description: Name of S3 bucket to hold website content
+  CloudFrontURL:
+    Value: !Join ['', ['https://', !GetAtt [WebContentCDN, DomainName], '/index.html']]
+    Description: Name of CloudFront URL
+  Github:
+    Value: !Ref GitHubRepository
+    Description: GitHub repository
