@@ -1,9 +1,29 @@
 Parameters:
-  GitHubRepository:
+  GitHubRepositoryUI:
     Type: String
-    Default: akane34/endava-challenge-aws-cloud/master
+    Default: akane34/challenge-aws-ui/master
     Description:  owner/repository/branch
 
+  GitHubRepositorySendEmail:
+    Type: String
+    Default: akane34/challenge-aws-lambda-send-email/master
+    Description:  owner/repository/branch
+
+  GitHubRepositoryRegisterUser:
+    Type: String
+    Default: akane34/challenge-aws-lambda-register-user/master
+    Description:  owner/repository/branch
+
+  GitHubRepositoryCognitoTrigger:
+    Type: String
+    Default: akane34/challenge-aws-lambda-cognito-trigger/master
+    Description:  owner/repository/branch
+
+  GitHubRepositoryToken:
+    Type: String
+    Default: akane34/challenge-aws-lambda-token/master
+    Description:  owner/repository/branch
+  
   GitHubOAuthToken:
     Type: String
     Default:  GitHub OAuthToken Here
@@ -14,9 +34,14 @@ Parameters:
     Default:  challenge.cloud@yopmail.com
     Description:  Email for send notifications
     
+  Postfix:
+    Type: String
+    Default:  _1
+    Description:  postfix
+
 Resources:
   # --------------------------------------BEGIN FRONTEND ---------------------------------
-  #Create AWS S3 Bucket
+  #Create AWS S3 Bucket  
   WebContentBucket:
     Type: 'AWS::S3::Bucket'
     DeletionPolicy: Delete
@@ -138,7 +163,7 @@ Resources:
         -  !Ref CodePipelineRole
     
   # CodePipeline with its stages:
-  S3:
+  S3UI:
     Type: "AWS::S3::Bucket"
     Properties:
       BucketName: !Join [ '', ['sourcecode', "-", !Ref 'AWS::StackName']]
@@ -148,7 +173,7 @@ Resources:
     Properties:
       Name: !Join [ '', ['DevOps-Pipeline', '-', !Ref 'AWS::StackName'] ]
       ArtifactStore:
-        Location: !Ref S3
+        Location: !Ref S3UI
         Type: S3
       RestartExecutionOnUpdate: true
       RoleArn: !Join [ '', ['arn:aws:iam::', !Ref 'AWS::AccountId', ':role/', !Ref CodePipelineRole  ] ]
@@ -165,9 +190,9 @@ Resources:
                 Provider: GitHub
                 Version: 1
               Configuration:
-                Owner: !Select [0, !Split [ '/' , !Ref GitHubRepository ]]
-                Repo: !Select [1, !Split [ '/' , !Ref GitHubRepository ]]
-                Branch: !Select [2, !Split [ '/' , !Ref GitHubRepository ]]
+                Owner: !Select [0, !Split [ '/' , !Ref GitHubRepositoryUI ]]
+                Repo: !Select [1, !Split [ '/' , !Ref GitHubRepositoryUI ]]
+                Branch: !Select [2, !Split [ '/' , !Ref GitHubRepositoryUI ]]
                 PollForSourceChanges: true
                 OAuthToken: !Ref GitHubOAuthToken
               OutputArtifacts:
@@ -176,22 +201,110 @@ Resources:
         # Stage 2:  Build and Deploy using Serverless Framework        
         - Name: Deploy
           Actions:
-            - Name: S3Deploy
+            - Name: S3DeployUI
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
-                Provider: S3
+                Provider: S3UI
                 Version: '1'
               InputArtifacts:
                 - Name: SourceCodeOutput
               Configuration: 
                 BucketName: !Ref WebContentBucket
                 Extract: 'true'
-              RunOrder: 2      
+              RunOrder: 2     
+   
 # --------------------------------------END FRONTEND ---------------------------------        
 
 # --------------------------------------BEGIN BACKEND ---------------------------------
+CodeBuildProject:
+    DependsOn:
+    - CodeBuildPolicy
+    Properties:
+      Artifacts:
+        Location: !Ref 'ArtifactsBucket'
+        Name: 'build-output.zip'
+        NamespaceType: BUILD_ID
+        Packaging: ZIP
+        Path: 'codebuild'
+        Type: S3
+      Cache:
+        Location: !Ref 'CacheBucket'
+        Type: S3
+      Description: !Join
+        - ''
+        - - 'CodeBuild Project for '
+          - !Ref 'AWS::StackName'
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/nodejs:8.11.0
+        Type: LINUX_CONTAINER
+      Name: !Ref 'AWS::StackName'
+      ServiceRole: !Ref 'CodeBuildRole'
+      Source:
+        Type: CODECOMMIT
+        Location: !Join
+          - ''
+          - - 'https://git-codecommit.'
+            - !Ref 'AWS::Region'
+            - '.amazonaws.com/v1/repos/'
+            - !Ref 'CodeCommitRepoName'
+        BuildSpec: 'buildspecs/build-with-cache.yml'
+    Type: AWS::CodeBuild::Project
 
+
+# CodePipeline with its stages:
+  S3SendEmail:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Join [ '', ['sourcecode', "-email-", !Ref 'AWS::StackName']]
+      
+  Pipeline:
+    Type: 'AWS::CodePipeline::Pipeline'
+    Properties:
+      Name: !Join [ '', ['DevOps-Pipeline', '-email-', !Ref 'AWS::StackName'] ]
+      ArtifactStore:
+        Location: !Ref S3SendEmail
+        Type: S3
+      RestartExecutionOnUpdate: true
+      RoleArn: !Join [ '', ['arn:aws:iam::', !Ref 'AWS::AccountId', ':role/', !Ref CodePipelineRole  ] ]
+      Stages:
+
+        # Stage 1:  Get the source from GitHub:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              RunOrder: 1
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: 1
+              Configuration:
+                Owner: !Select [0, !Split [ '/' , !Ref GitHubRepositorySendEmail ]]
+                Repo: !Select [1, !Split [ '/' , !Ref GitHubRepositorySendEmail ]]
+                Branch: !Select [2, !Split [ '/' , !Ref GitHubRepositorySendEmail ]]
+                PollForSourceChanges: true
+                OAuthToken: !Ref GitHubOAuthToken
+              OutputArtifacts:
+                - Name: SourceCodeEmailOutput
+                
+        # Stage 2:  Build and Deploy using Serverless Framework        
+        - Name: Deploy
+          Actions:
+            - Name: S3DeployEmail
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: S3SendEmail
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceCodeEmailOutput
+              Configuration: 
+                BucketName: !Ref WebContentBucket
+                Extract: 'true'
+              RunOrder: 2     
+   
 # --------------------------------------END BACKEND ---------------------------------
 
 Outputs:

@@ -2,7 +2,7 @@ var myHeaders = new Headers();
 myHeaders.set('Cache-Control', 'no-store');
 var urlParams = new URLSearchParams(window.location.search);
 var appClientId = "k1snulk0m00s9t7c5t76mdiq5";
-var redirectURI = "https://cloudchallenge-webcontentbucket-y1uo5s0nrggz.s3.amazonaws.com/index.html";
+var redirectURI = "https://d3ckp6wzau4cz8.cloudfront.net/index.html";
 var authorizationURL = "https://uohsmruw86.execute-api.us-east-1.amazonaws.com/dev/"
 
 var el = document.getElementById('login');
