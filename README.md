@@ -18,28 +18,30 @@ Para el Frontend se usó un bucket de S3 para almacenar el contenido estático e
 
 La URL de la aplicación es: https://dbz4u2s1scs26.cloudfront.net/index.html
 Los recursos usados fueron:
-* S3: cloudchallenge-webcontentbucket-y1uo5s0nrggz
-* CloudFront Domain Name: dbz4u2s1scs26.cloudfront.net
+* **S3:** cloudchallenge-webcontentbucket-y1uo5s0nrggz
+* **CloudFront Domain Name:** dbz4u2s1scs26.cloudfront.net
 
 El Frontend se comunicá cpn los servicios del backend a través de una API expuesta en API Gateway.
 
 ### **Backend**
 
-Como estrategia de implementación del sistema de Autenticación y Autorización, se usó el protocolo **OpenId Connect**, el cúal a través del flujo **"Authorization Code Grant"** de OAuth2 es posible registrar y autenticar un usuario. En esta estrategia se delega a un ente externo, llamado **Identity Provider**, toda la lógica de autenticación y gestión de usuarios, estos sistemas son especializados en el manejo de forma segura la identidad de los usuarios.
+Como estrategia de implementación del sistema de Autenticación y Autorización, se usó el protocolo **OpenId Connect**, el cúal a través del flujo **"Authorization Code Grant"** de OAuth2 es posible registrar y autenticar un usuario. En esta estrategia se delega a un ente externo, llamado **Identity Provider** (IdP), toda la lógica de autenticación y gestión de usuarios, estos sistemas son especializados en el manejo de forma segura de la identidad de los usuarios.
 
 Se puede usar cualquier **Identity Provider** que soporte **OpenId**, para este proyecto se usó **AWS Cognito**.
 
-Para poder abstraer los Identity Provider se cosntruyó una capa Middleware que permite comunicarse con cualquier Identity Provider.
+Para poder abstraer los **Identity Provider** se construyó una capa Middleware que permite comunicarse con cualquier IdP.
 
-El punto de entrada del Backend es un AWS API Gateway, el cuál expone dos endpoints:
+El punto de entrada del Backend es un **AWS API Gateway**, el cuál expone dos endpoints:
 * **Authorize Endpoint:** https://uohsmruw86.execute-api.us-east-1.amazonaws.com/dev/oauth2/authorize
 * **Token Endpoint:** https://uohsmruw86.execute-api.us-east-1.amazonaws.com/dev/oauth2/token
 
 El **Authorize Endpoint** es un proxy hacia el endpoint /authorize de **Cognito**.
 
-El **Token Endpoint** expone una función lambda que procesa tokens, es decir, permite obtener un token desde el Identity Provider, de esta forma los secretos del Identity Provider, access tokens y refres tokens no se exponen en el Frontend, y todo puede ser manejado desde backend.
+El **Token Endpoint** expone una función lambda que procesa tokens, es decir, permite obtener un token desde el Identity Provider, de esta forma los secretos del Identity Provider, access tokens y refresh tokens no se exponen en el Frontend, y todo puede ser manejado desde backend.
 
-Para manejar la personalización o flujos personalizados en la autenticación se creó una función lambda que maneja un Trigger desde Cognito, el cuál se ejecuta cunado un usuario confirma su correo electrónico al momento de registrarse, esta función Lambda coloca un mensaje en un tópico de **SNS**, el cuál distirubuye el mensaje hacia otras dos lambdas, una que hace el registro del usuario en una Base de Datos local **DynamoDB** (la palabra local se usa para diferenciar los usuarios almacenados en el Identity Provider), la otra envia un correo personalizado al usuario usando el servicio de **SES**.
+Para implementar los flujos personalizados en la autenticación se creó una función lambda que maneja un Trigger desde **Cognito**, el cuál se ejecuta cuando un usuario confirma su correo electrónico al momento de registrarse, esta función Lambda coloca un mensaje en un tópico de **SNS**, el cuál distirubuye el mensaje hacia otras dos lambdas, una que hace el registro del usuario en una Base de Datos local **DynamoDB** (la palabra local se usa para diferenciar los usuarios almacenados en el Identity Provider), la otra envia un correo personalizado al usuario usando el servicio de **SES**.
+
+La tabla de usuarios en DynamoDB también es usada para verificar si el usuario existe y así poderlo autenticar.
 
 ```Nota 1: Aunque se sugería usar SQS para la mensajería, se decidió usar SNS porque SQS solo permite el envío de mensajes a una sola función lambda.```
 
@@ -57,3 +59,12 @@ Los recursos usados en la arquitectura anterior fueron:
 * **User Register Lambda:** challenge-cloud-register-user
 * **Send Email Lambda:** challenge-cloud-email
 * **User Table Dynamo:** Challenge_Cloud_Users
+
+Los repositorios del proyecto son:
+* FrontEnd:
+  * [challenge-aws-ui](https://github.com/akane34/)
+* Backend:
+  * [challenge-aws-lambda-send-email](https://github.com/akane34/challenge-aws-lambda-send-email)
+  * [challenge-aws-lambda-register-user](https://github.com/akane34/challenge-aws-lambda-register-user)
+  * [challenge-aws-lambda-cognito-trigger](https://github.com/akane34/challenge-aws-lambda-cognito-trigger)
+  * [challenge-aws-lambda-token](https://github.com/akane34/challenge-aws-lambda-token)
